@@ -1098,5 +1098,72 @@ window.onload=()=>{
   if(s&&s.username){currentUser=s;loginSuccess(s);}
 };
 </script>
+
+<!-- RAZORPAY -->
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+
+<!-- PAYWALL MODAL -->
+<div id="paywall-modal" style="display:none;position:fixed;inset:0;background:rgba(26,29,46,.6);backdrop-filter:blur(6px);z-index:9000;align-items:center;justify-content:center;padding:20px;">
+  <div style="background:#fff;border-radius:24px;padding:40px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.15);text-align:center;">
+    <div style="font-size:44px;margin-bottom:12px;">🔒</div>
+    <div style="font-size:20px;font-weight:800;color:#1A1D2E;margin-bottom:6px;"><span id="paywall-module">Writing</span> is a Pro feature</div>
+    <div style="font-size:14px;color:#6B7080;margin-bottom:24px;line-height:1.6;">Upgrade to unlock all 6 modules, real Claude AI feedback, streak tracking, and interview prep.</div>
+
+    <!-- FREE TRIAL -->
+    <button id="trial-btn" onclick="startFreeTrial()" style="width:100%;padding:14px;background:linear-gradient(135deg,#18A76A,#0EA5E9);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;">
+      🎁 Start 7-Day Free Trial
+    </button>
+    <div id="trial-used-msg" style="display:none;background:rgba(217,119,6,.1);color:#D97706;border-radius:10px;padding:10px;font-size:13px;font-weight:600;margin-bottom:12px;">Trial already used — upgrade to continue ↓</div>
+
+    <!-- DIVIDER -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;"><div style="flex:1;height:1px;background:rgba(0,0,0,.1);"></div><span style="font-size:12px;color:#6B7080;">or subscribe</span><div style="flex:1;height:1px;background:rgba(0,0,0,.1);"></div></div>
+
+    <!-- PAY BUTTON -->
+    <button id="pay-btn" onclick="startPayment()" style="width:100%;padding:14px;background:#5B5BD6;color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:16px;font-family:inherit;">
+      💳 Pay ₹199/month
+    </button>
+
+    <!-- FEATURES LIST -->
+    <div style="background:#F5F6FA;border-radius:12px;padding:14px;text-align:left;margin-bottom:16px;">
+      <div style="font-size:12px;font-weight:700;color:#6B7080;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">What you get with Pro</div>
+      <div style="font-size:13px;color:#1A1D2E;line-height:2;">✅ All 6 daily modules<br>✅ Real Claude AI feedback on writing<br>✅ AI mock interviewer<br>✅ Accent training + audio<br>✅ Streak calendar 2025–2029<br>✅ Tamil word meanings<br>✅ Cancel anytime</div>
+    </div>
+
+    <button onclick="hidePaywall()" style="background:none;border:none;color:#6B7080;font-size:13px;cursor:pointer;font-family:inherit;">Maybe later</button>
+  </div>
+</div>
+
+<!-- PLAN EXPIRY WARNING BANNER -->
+<div id="expiry-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#D97706;color:#fff;padding:12px 20px;font-size:13px;font-weight:600;text-align:center;z-index:8000;">
+  ⚠️ <span id="expiry-text">Your trial ends soon!</span>
+  <button onclick="showPaywall('pro')" style="background:rgba(255,255,255,.25);border:none;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;margin-left:10px;font-family:inherit;">Upgrade Now</button>
+  <button onclick="document.getElementById('expiry-banner').style.display='none'" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;margin-left:10px;">✕</button>
+</div>
+
+<script src="/paywall.js"></script>
+<script>
+// Show expiry warning if trial/sub ends in < 3 days
+function checkExpiry() {
+  if (!userProfile) return;
+  const plan = userProfile.plan;
+  const endDate = plan === 'pro' ? userProfile.subscription_end_date : plan === 'trial' ? userProfile.trial_end_date : null;
+  if (!endDate) return;
+  const daysLeft = Math.ceil((new Date(endDate) - new Date()) / (1000*60*60*24));
+  if (daysLeft <= 3 && daysLeft >= 0) {
+    document.getElementById('expiry-banner').style.display = 'block';
+    document.getElementById('expiry-text').textContent = plan === 'trial'
+      ? `Your free trial ends in ${daysLeft} day${daysLeft!==1?'s':''}! Upgrade to keep access.`
+      : `Your Pro subscription ends in ${daysLeft} day${daysLeft!==1?'s':''}! Renew now.`;
+  }
+}
+// Call after user loads
+const _origSetupUI = window.setupUserUI;
+window.setupUserUI = function() {
+  if (_origSetupUI) _origSetupUI();
+  updatePlanBadge();
+  setTimeout(checkExpiry, 2000);
+};
+</script>
+
 </body>
 </html>

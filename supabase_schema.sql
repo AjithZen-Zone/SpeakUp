@@ -122,3 +122,54 @@ CREATE INDEX IF NOT EXISTS idx_progress_user_date ON progress(user_id, date);
 CREATE INDEX IF NOT EXISTS idx_progress_user_module ON progress(user_id, module);
 CREATE INDEX IF NOT EXISTS idx_vocab_log_user ON vocab_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_writing_log_user ON writing_log(user_id);
+
+-- ============================================
+-- SUBSCRIPTION & PAYMENTS SCHEMA (ADD-ON)
+-- ============================================
+
+-- Add plan fields to profiles
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free'; -- free, trial, pro
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS trial_start_date TIMESTAMP;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS trial_end_date TIMESTAMP;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS subscription_start_date TIMESTAMP;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS subscription_end_date TIMESTAMP;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS razorpay_subscription_id TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS razorpay_customer_id TEXT;
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS total_paid INTEGER DEFAULT 0;
+
+-- PAYMENTS TABLE
+CREATE TABLE IF NOT EXISTS payments (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_email TEXT,
+  user_name TEXT,
+  razorpay_payment_id TEXT UNIQUE,
+  razorpay_subscription_id TEXT,
+  razorpay_order_id TEXT,
+  amount INTEGER, -- in paise (19900 = ₹199)
+  currency TEXT DEFAULT 'INR',
+  status TEXT DEFAULT 'pending', -- pending, captured, failed, refunded
+  plan TEXT DEFAULT 'pro',
+  billing_period_start TIMESTAMP,
+  billing_period_end TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+-- OWNER DASHBOARD VIEW
+CREATE OR REPLACE VIEW owner_dashboard AS
+SELECT
+  COUNT(DISTINCT p.id) as total_users,
+  COUNT(DISTINCT CASE WHEN pr.plan = 'pro' THEN pr.id END) as pro_users,
+  COUNT(DISTINCT CASE WHEN pr.plan = 'trial' THEN pr.id END) as trial_users,
+  COUNT(DISTINCT CASE WHEN pr.plan = 'free' THEN pr.id END) as free_users,
+  COALESCE(SUM(CASE WHEN pa.status = 'captured' THEN pa.amount END), 0) / 100 as total_revenue_inr,
+  COUNT(DISTINCT CASE WHEN pa.status = 'captured' AND pa.created_at > NOW() - INTERVAL '30 days' THEN pa.id END) as payments_this_month,
+  COALESCE(SUM(CASE WHEN pa.status = 'captured' AND pa.created_at > NOW() - INTERVAL '30 days' THEN pa.amount END), 0) / 100 as revenue_this_month_inr
+FROM profiles pr
+LEFT JOIN payments pa ON pr.id = pa.user_id
+LEFT JOIN auth.users p ON pr.id = p.id;
+
+-- RLS for payments (owner only via service key)
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users can view own payments" ON payments FOR SELECT USING (auth.uid() = user_id);
+CREATE POLICY "Service role can manage payments" ON payments FOR ALL USING (true);
