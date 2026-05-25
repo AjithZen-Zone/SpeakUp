@@ -1,11 +1,19 @@
 {
   "version": 2,
-  "rewrites": [
-    { "source": "/owner", "destination": "/public/owner.html" },
-    { "source": "/", "destination": "/public/index.html" },
-    { "source": "/((?!api/).*)", "destination": "/public/index.html" }
+  "builds": [
+    {
+      "src": "public/**",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    }
   ],
-  "crons": [
-    { "path": "/api/subscriptions/check-expired", "schedule": "0 0 * * *" }
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/owner", "dest": "/public/owner.html" },
+    { "src": "/", "dest": "/public/index.html" },
+    { "src": "/(.*)", "dest": "/public/$1" }
   ]
 }

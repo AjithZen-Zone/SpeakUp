@@ -1,8 +1,8 @@
-import { createClient } from '@supabase/supabase-js';
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
-export default async function handler(req, res) {
+const { createClient } = require('@supabase/supabase-js');
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).end();
   const { user_id, date } = req.body || {};
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
   try {
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', user_id).single();
     const lastDate = profile?.last_completed_date;
@@ -22,4 +22,4 @@ export default async function handler(req, res) {
     });
     res.json({ streak: newStreak });
   } catch(e) { res.status(500).json({ error: e.message }); }
-}
+};

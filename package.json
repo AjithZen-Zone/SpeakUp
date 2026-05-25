@@ -2,11 +2,6 @@
   "name": "speakup-mvp",
   "version": "2.0.0",
   "description": "SpeakUp - Daily Communication & Career Coach",
-  "type": "module",
-  "scripts": {
-    "dev": "node server.js",
-    "start": "node server.js"
-  },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.24.0",
     "@supabase/supabase-js": "^2.43.0",
