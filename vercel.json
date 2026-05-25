@@ -1,16 +1,11 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "server.js", "use": "@vercel/node" }
-  ],
-  "routes": [
-    { "src": "/api/(.*)", "dest": "/server.js" },
-    { "src": "/(.*)", "dest": "/public/$1" }
+  "rewrites": [
+    { "source": "/owner", "destination": "/public/owner.html" },
+    { "source": "/", "destination": "/public/index.html" },
+    { "source": "/((?!api/).*)", "destination": "/public/index.html" }
   ],
   "crons": [
-    {
-      "path": "/api/subscriptions/check-expired",
-      "schedule": "0 0 * * *"
-    }
+    { "path": "/api/subscriptions/check-expired", "schedule": "0 0 * * *" }
   ]
 }

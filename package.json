@@ -1,7 +1,8 @@
 {
   "name": "speakup-mvp",
   "version": "2.0.0",
-  "description": "SpeakUp - Daily Communication & Career Coach with Subscriptions",
+  "description": "SpeakUp - Daily Communication & Career Coach",
+  "type": "module",
   "scripts": {
     "dev": "node server.js",
     "start": "node server.js"
