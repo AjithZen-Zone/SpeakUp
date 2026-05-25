@@ -70,62 +70,9 @@ async function startFreeTrial() {
   btn.disabled = false; btn.textContent = '🎁 Start 7-Day Free Trial';
 }
 
-// Pay with Razorpay
+// Payments coming soon
 async function startPayment() {
-  if (!currentUser) return;
-  const btn = document.getElementById('pay-btn');
-  btn.disabled = true; btn.textContent = 'Creating order...';
-  try {
-    const r = await fetch('/api/payment/create-order', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        user_id: currentUser.id,
-        user_email: currentUser.email,
-        user_name: currentUser.user_metadata?.full_name || 'User'
-      })
-    });
-    const order = await r.json();
-    if (order.error) throw new Error(order.error);
-    const options = {
-      key: order.key,
-      amount: order.amount,
-      currency: 'INR',
-      name: 'SpeakUp',
-      description: 'Pro Plan — 1 Month',
-      image: '',
-      order_id: order.order_id,
-      prefill: { email: currentUser.email, name: currentUser.user_metadata?.full_name || '' },
-      theme: { color: '#5B5BD6' },
-      handler: async function(response) {
-        btn.textContent = 'Verifying payment...';
-        const verify = await fetch('/api/payment/verify', {
-          method: 'POST', headers: {'Content-Type':'application/json'},
-          body: JSON.stringify({
-            razorpay_order_id: response.razorpay_order_id,
-            razorpay_payment_id: response.razorpay_payment_id,
-            razorpay_signature: response.razorpay_signature,
-            user_id: currentUser.id,
-            user_email: currentUser.email,
-            user_name: currentUser.user_metadata?.full_name || 'User'
-          })
-        });
-        const vData = await verify.json();
-        if (vData.success) {
-          userProfile.plan = 'pro';
-          userProfile.subscription_end_date = vData.subscription_end;
-          hidePaywall();
-          showNotif('🎉', 'Payment successful! You are now Pro! 🚀', 4000);
-          updatePlanBadge();
-        } else {
-          showNotif('⚠️', 'Payment verification failed. Contact support.');
-        }
-      }
-    };
-    const rzp = new window.Razorpay(options);
-    rzp.open();
-    rzp.on('payment.failed', () => showNotif('❌', 'Payment failed. Please try again.'));
-  } catch(e) { showNotif('⚠️', 'Could not create order. Check server.'); }
-  btn.disabled = false; btn.textContent = '💳 Pay ₹199/month';
+  showNotif('🚀', 'Payments coming soon! Enjoy free access for now!', 3000);
 }
 
 function updatePlanBadge() {
