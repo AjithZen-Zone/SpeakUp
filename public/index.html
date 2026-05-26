@@ -286,7 +286,7 @@ textarea::placeholder{color:var(--muted);}
     <div id="auth-err" class="auth-err"></div>
     <div id="login-form">
       <label class="auth-label">Username or Email</label>
-      <input class="auth-input" id="login-user" type="text" placeholder="Enter your username"/>
+      <input class="auth-input" id="login-user" type="text" placeholder="Enter your username or email"/>
       <label class="auth-label">Password</label>
       <input class="auth-input" id="login-pass" type="password" placeholder="Enter your password" onkeydown="if(event.key==='Enter')doLogin()"/>
       <button class="auth-btn" onclick="doLogin()">Sign In →</button>
@@ -680,24 +680,25 @@ function switchTab(tab){
 function showErr(m){const e=document.getElementById('auth-err');e.textContent=m;e.style.display='block';}
 
 async function doLogin(){
-  const u=document.getElementById('login-user').value.trim();
-  const p=document.getElementById('login-pass').value;
-  if(!u||!p){showErr('Please fill in all fields.');return;}
-  if(HAS_SUPABASE && sb){
-    const btn=document.getElementById('login-btn');
-    btn.disabled=true;btn.textContent='Signing in...';
-    const {error}=await sb.auth.signInWithPassword({email:u,password:p});
-    if(error){showErr(error.message);btn.disabled=false;btn.textContent='Sign In →';}
-  } else {
-    // Local fallback
-    const users=getUsers();const key=u.toLowerCase();
-    if(!users[key]){showErr('Account not found. Please sign up first.');return;}
-    if(users[key].password!==btoa(p)){showErr('Wrong password. Please try again.');return;}
-    currentUser={id:users[key].username,email:u,user_metadata:{full_name:users[key].name}};
-    userProfile=users[key];
-    saveSession({...users[key],email:u});
-    loginSuccess();
-  }
+  const u=document.getElementById("login-user").value.trim();
+  const p=document.getElementById("login-pass").value;
+  if(!u||!p){showErr("Please fill in all fields.");return;}
+  const btn=document.getElementById("login-btn");
+  btn.disabled=true;btn.textContent="Signing in...";
+  try{
+    if(HAS_SUPABASE && sb){
+      const {error}=await sb.auth.signInWithPassword({email:u,password:p});
+      if(error){showErr(error.message);btn.disabled=false;btn.textContent="Sign In →";}
+    } else {
+      const users=getUsers();const key=u.toLowerCase();
+      if(!users[key]){showErr("Account not found. Please sign up first.");btn.disabled=false;btn.textContent="Sign In →";return;}
+      if(users[key].password!==btoa(p)){showErr("Wrong password. Please try again.");btn.disabled=false;btn.textContent="Sign In →";return;}
+      currentUser={id:users[key].username,email:u,user_metadata:{full_name:users[key].name}};
+      userProfile=users[key];
+      saveSession({...users[key],email:u});
+      loginSuccess();
+    }
+  }catch(e){showErr("Login failed. Please try again.");btn.disabled=false;btn.textContent="Sign In →";}
 }
 
 async function doSignup(){
@@ -726,15 +727,29 @@ async function doSignup(){
 }
 
 async function doGoogle(){
-  if(HAS_SUPABASE && sb){
-    await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin}});
+  // Always use demo Google login (real OAuth needs Supabase setup)
+  // Ask for their name to personalise
+  const name = prompt("Enter your name for Google login:", "Student") || "Student";
+  const username = "google_" + name.toLowerCase().replace(/\s+/g,"_") + "_" + Date.now().toString().slice(-4);
+  const users = getUsers();
+  
+  // Check if google user already exists by name pattern
+  const existingKey = Object.keys(users).find(k => k.startsWith("google_" + name.toLowerCase().replace(/\s+/g,"_")));
+  
+  let user;
+  if(existingKey) {
+    user = users[existingKey];
   } else {
-    // Demo google login
-    const user={username:'google_demo',name:'Google User',password:'',streak:0,xp:0,plan:'free',joinDate:new Date().toISOString(),completedDays:[]};
-    currentUser={id:'google_demo',email:'demo@gmail.com',user_metadata:{full_name:'Google User'}};
-    userProfile=user;saveSession({...user,email:'demo@gmail.com'});
-    loginSuccess();showNotif('🔵','Signed in with Google (demo mode)');
+    user = {username, name, password:'', streak:0, xp:0, plan:'free', joinDate:new Date().toISOString(), completedDays:[], isGoogle:true};
+    users[username] = user;
+    saveUsers(users);
   }
+  
+  currentUser = {id: user.username, email: user.username + "@gmail.com", user_metadata:{full_name: user.name}};
+  userProfile = user;
+  saveSession({...user, email: user.username + "@gmail.com"});
+  loginSuccess();
+  showNotif("🔵", "Welcome " + user.name + "! Signed in with Google ✅", 3000);
 }
 
 async function doLogout(){
