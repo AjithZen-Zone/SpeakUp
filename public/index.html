@@ -261,6 +261,14 @@ textarea::placeholder{color:var(--muted);}
   .grid-2,.grid-3{grid-template-columns:1fr;}
 }
 </style>
+<style>
+.ai-thinking{display:flex;gap:4px;padding:12px 16px;background:#EEF2FF;border-radius:14px;align-self:flex-start;width:60px;}
+.ai-thinking span{width:6px;height:6px;background:var(--accent);border-radius:50%;animation:bounce .8s ease-in-out infinite;}
+.ai-thinking span:nth-child(2){animation-delay:.15s;}
+.ai-thinking span:nth-child(3){animation-delay:.3s;}
+@keyframes bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
 
@@ -637,14 +645,27 @@ textarea::placeholder{color:var(--muted);}
 <div class="notif" id="notif"><span id="notif-icon"></span> <span id="notif-text"></span></div>
 
 <script>
-// ===== USER STORAGE =====
+// ===== CONFIG =====
+const SUPABASE_URL = window.__env?.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = window.__env?.SUPABASE_ANON_KEY || '';
+const API_BASE = window.location.origin;
+const HAS_SUPABASE = SUPABASE_URL && SUPABASE_ANON_KEY;
+
+let sb = null;
+if (HAS_SUPABASE && window.supabase) {
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
+
+let currentUser = null;
+let userProfile = null;
+
+// ===== USER STORAGE FALLBACK (when no Supabase) =====
 function getUsers(){try{return JSON.parse(localStorage.getItem('su_users')||'{}')}catch(e){return {}}}
 function saveUsers(u){try{localStorage.setItem('su_users',JSON.stringify(u))}catch(e){}}
 function getSession(){try{return JSON.parse(localStorage.getItem('su_session')||'null')}catch(e){return null}}
 function saveSession(s){try{localStorage.setItem('su_session',JSON.stringify(s))}catch(e){}}
 
-let currentUser=null;
-
+// ===== AUTH =====
 function switchTab(tab){
   document.getElementById('tab-login').classList.toggle('active',tab==='login');
   document.getElementById('tab-signup').classList.toggle('active',tab==='signup');
@@ -655,65 +676,103 @@ function switchTab(tab){
     :`Already have an account? <a onclick="switchTab('login')">Sign in</a>`;
   document.getElementById('auth-err').style.display='none';
 }
+
 function showErr(m){const e=document.getElementById('auth-err');e.textContent=m;e.style.display='block';}
-function doLogin(){
+
+async function doLogin(){
   const u=document.getElementById('login-user').value.trim();
   const p=document.getElementById('login-pass').value;
   if(!u||!p){showErr('Please fill in all fields.');return;}
-  const users=getUsers();const key=u.toLowerCase();
-  if(!users[key]){showErr('Account not found. Please sign up first.');return;}
-  if(users[key].password!==btoa(p)){showErr('Wrong password. Please try again.');return;}
-  loginSuccess(users[key]);
+  if(HAS_SUPABASE && sb){
+    const btn=document.getElementById('login-btn');
+    btn.disabled=true;btn.textContent='Signing in...';
+    const {error}=await sb.auth.signInWithPassword({email:u,password:p});
+    if(error){showErr(error.message);btn.disabled=false;btn.textContent='Sign In →';}
+  } else {
+    // Local fallback
+    const users=getUsers();const key=u.toLowerCase();
+    if(!users[key]){showErr('Account not found. Please sign up first.');return;}
+    if(users[key].password!==btoa(p)){showErr('Wrong password. Please try again.');return;}
+    currentUser={id:users[key].username,email:u,user_metadata:{full_name:users[key].name}};
+    userProfile=users[key];
+    saveSession({...users[key],email:u});
+    loginSuccess();
+  }
 }
-function doSignup(){
+
+async function doSignup(){
   const name=document.getElementById('signup-name').value.trim();
   const u=document.getElementById('signup-user').value.trim();
   const p=document.getElementById('signup-pass').value;
   if(!name||!u||!p){showErr('Please fill in all fields.');return;}
-  if(u.length<3){showErr('Username must be at least 3 characters.');return;}
   if(p.length<6){showErr('Password must be at least 6 characters.');return;}
-  const users=getUsers();
-  if(users[u.toLowerCase()]){showErr('Username taken. Please choose another.');return;}
-  const user={username:u.toLowerCase(),name,password:btoa(p),streak:0,xp:0,joinDate:new Date().toISOString(),completedDays:[]};
-  users[u.toLowerCase()]=user;saveUsers(users);loginSuccess(user);
+  if(HAS_SUPABASE && sb){
+    const btn=document.getElementById('signup-btn');
+    btn.disabled=true;btn.textContent='Creating account...';
+    const {error}=await sb.auth.signUp({email:u,password:p,options:{data:{full_name:name}}});
+    if(error){showErr(error.message);btn.disabled=false;btn.textContent='Create Account →';}
+    else{showErr('Check your email to confirm your account!');document.getElementById('auth-err').style.color='var(--green)';document.getElementById('auth-err').style.background='var(--green-light)';btn.disabled=false;btn.textContent='Create Account →';}
+  } else {
+    // Local fallback
+    const users=getUsers();
+    if(users[u.toLowerCase()]){showErr('Username taken. Please choose another.');return;}
+    const user={username:u.toLowerCase(),name,password:btoa(p),streak:0,xp:0,plan:'free',joinDate:new Date().toISOString(),completedDays:[]};
+    users[u.toLowerCase()]=user;saveUsers(users);
+    currentUser={id:u.toLowerCase(),email:u,user_metadata:{full_name:name}};
+    userProfile=user;
+    saveSession({...user,email:u});
+    loginSuccess();
+  }
 }
-function doGoogle(){
-  const users=getUsers();const key='google_demo_user';
-  if(!users[key])users[key]={username:key,name:'Google User',password:'',streak:0,xp:0,joinDate:new Date().toISOString(),completedDays:[],isGoogle:true};
-  saveUsers(users);loginSuccess(users[key]);showNotif('🔵','Signed in with Google');
+
+async function doGoogle(){
+  if(HAS_SUPABASE && sb){
+    await sb.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin}});
+  } else {
+    // Demo google login
+    const user={username:'google_demo',name:'Google User',password:'',streak:0,xp:0,plan:'free',joinDate:new Date().toISOString(),completedDays:[]};
+    currentUser={id:'google_demo',email:'demo@gmail.com',user_metadata:{full_name:'Google User'}};
+    userProfile=user;saveSession({...user,email:'demo@gmail.com'});
+    loginSuccess();showNotif('🔵','Signed in with Google (demo mode)');
+  }
 }
-function loginSuccess(user){
-  currentUser=user;saveSession(user);
-  document.getElementById('auth-screen').style.display='none';
-  document.getElementById('app-screen').classList.add('visible');
-  setupUserUI();init();
-}
-function doLogout(){
-  saveSession(null);currentUser=null;
+
+async function doLogout(){
+  if(HAS_SUPABASE && sb) await sb.auth.signOut();
+  saveSession(null);currentUser=null;userProfile=null;
   document.getElementById('app-screen').classList.remove('visible');
   document.getElementById('auth-screen').style.display='flex';
   document.getElementById('login-user').value='';
   document.getElementById('login-pass').value='';
   document.getElementById('auth-err').style.display='none';
 }
+
+function loginSuccess(){
+  document.getElementById('auth-screen').style.display='none';
+  document.getElementById('app-screen').classList.add('visible');
+  setupUserUI();init();
+}
+
 function setupUserUI(){
-  const name=currentUser.name||currentUser.username;
+  const name=currentUser?.user_metadata?.full_name||currentUser?.name||currentUser?.email?.split('@')[0]||'User';
   const initials=name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
   document.getElementById('user-avatar').textContent=initials;
   document.getElementById('user-display-name').textContent=name;
   document.getElementById('dash-name').textContent=name.split(' ')[0];
-  document.getElementById('streak-count').textContent=currentUser.streak||0;
-  document.getElementById('dash-streak').textContent=currentUser.streak||0;
+  const streak=userProfile?.streak||0;
+  document.getElementById('streak-count').textContent=streak;
+  document.getElementById('dash-streak').textContent=streak;
 }
 
 // ===== DATA =====
 const vocabData=[
-  {word:"Articulate",phonetic:"/ɑːˈtɪk.jʊ.lət/",type:"Adjective / Verb",meaning:"Able to express thoughts and feelings clearly and effectively in speech or writing.",example:"She was articulate in explaining her project to the interview panel."},
-  {word:"Eloquent",phonetic:"/ˈel.ə.kwənt/",type:"Adjective",meaning:"Fluent and persuasive in speaking or writing; having a clear, powerful way with words.",example:"His eloquent speech left a lasting impression on the entire audience."},
-  {word:"Concise",phonetic:"/kənˈsaɪs/",type:"Adjective",meaning:"Giving a lot of information clearly and briefly — using few words without losing meaning.",example:"Keep your answers concise during the interview — say what matters most."},
-  {word:"Proficient",phonetic:"/prəˈfɪʃ.ənt/",type:"Adjective",meaning:"Competent and skilled at doing something; highly capable through practice.",example:"She became proficient in English after months of daily practice."},
-  {word:"Persuasive",phonetic:"/pəˈsweɪ.sɪv/",type:"Adjective",meaning:"Having the ability to convince or influence someone's opinion or decision.",example:"A persuasive communicator can lead a group discussion effectively."}
+  {word:"Articulate",phonetic:"/ɑːˈtɪk.jʊ.lət/",type:"Adjective / Verb",meaning:"Able to express thoughts and feelings clearly and effectively in speech or writing.",tamil_meaning:"தெளிவாக பேசும் திறன்",example:"She was articulate in explaining her project to the interview panel."},
+  {word:"Eloquent",phonetic:"/ˈel.ə.kwənt/",type:"Adjective",meaning:"Fluent and persuasive in speaking or writing; having a clear, powerful way with words.",tamil_meaning:"சொல்வன்மை உடைய",example:"His eloquent speech left a lasting impression on the entire audience."},
+  {word:"Concise",phonetic:"/kənˈsaɪs/",type:"Adjective",meaning:"Giving a lot of information clearly and briefly — using few words without losing meaning.",tamil_meaning:"சுருக்கமான",example:"Keep your answers concise during the interview — say what matters most."},
+  {word:"Proficient",phonetic:"/prəˈfɪʃ.ənt/",type:"Adjective",meaning:"Competent and skilled at doing something; highly capable through practice.",tamil_meaning:"திறமையான",example:"She became proficient in English after months of daily practice."},
+  {word:"Persuasive",phonetic:"/pəˈsweɪ.sɪv/",type:"Adjective",meaning:"Having the ability to convince or influence someone's opinion or decision.",tamil_meaning:"தூண்டும் திறனுள்ள",example:"A persuasive communicator can lead a group discussion effectively."}
 ];
+
 const writingPrompts=[
   "Describe a challenge you faced in college and how you overcame it. What did you learn about yourself?",
   "If you could change one thing about how communication is taught in schools, what would it be and why?",
@@ -721,77 +780,58 @@ const writingPrompts=[
   "Explain why good communication skills matter more than technical knowledge in today's workplace.",
   "Describe your ideal work environment. How does communication play a role in it?"
 ];
+
 const grammarData=[
   {sentence:"She has been working here ___ five years.",blank:"___",options:["since","for","from","during"],correct:1,tip:"Use 'for' with a duration of time (five years). Use 'since' with a starting point (since 2019)."},
-  {sentence:"Neither the manager nor the employees ___ informed.",blank:"___",options:["was","were","has","is"],correct:1,tip:"With 'neither...nor', the verb agrees with the closest subject — 'employees' is plural, so use 'were'."},
-  {sentence:"I would have called you if I ___ your number.",blank:"___",options:["know","knew","had known","have known"],correct:2,tip:"Third conditional: 'If + past perfect, would have + past participle'. Use 'had known' here."},
+  {sentence:"Neither the manager nor the employees ___ informed.",blank:"___",options:["was","were","has","is"],correct:1,tip:"With 'neither...nor', verb agrees with the closest subject — 'employees' is plural → 'were'."},
+  {sentence:"I would have called you if I ___ your number.",blank:"___",options:["know","knew","had known","have known"],correct:2,tip:"Third conditional: If + past perfect, would have + past participle. Use 'had known'."},
   {sentence:"The team congratulated ___ on winning.",blank:"___",options:["themselves","ourself","itself","yourself"],correct:0,tip:"'The team' is plural in meaning here. 'Themselves' is the correct reflexive pronoun."},
-  {sentence:"By the time she arrives, we ___ the presentation.",blank:"___",options:["finish","will finish","will have finished","finished"],correct:2,tip:"'By the time' signals future perfect tense: 'will have finished' — completed before another future point."}
+  {sentence:"By the time she arrives, we ___ the presentation.",blank:"___",options:["finish","will finish","will have finished","finished"],correct:2,tip:"'By the time' signals future perfect: 'will have finished' — completed before another future point."}
 ];
+
 const readingData={
-  passage:`In today's competitive job market, communication skills have become as important as technical expertise. Employers consistently rank verbal and written communication among the top qualities they seek in candidates. A study by LinkedIn found that 57% of senior leaders say soft skills — particularly communication — are more important than hard skills when evaluating candidates.\n\nCommunication is not merely about speaking well; it encompasses active listening, clear writing, the ability to read a room, and adapting your message to your audience. For a fresh graduate entering the workforce, developing these skills early creates a significant advantage. Daily practice compounds over time into confident, natural expression.`,
+  passage:"In today's competitive job market, communication skills have become as important as technical expertise. Employers consistently rank verbal and written communication among the top qualities they seek in candidates. A LinkedIn study found that 57% of senior leaders say soft skills — particularly communication — are more important than hard skills.
+
+Communication encompasses active listening, clear writing, the ability to read a room, and adapting your message to your audience. For a fresh graduate entering the workforce, developing these skills early creates a significant advantage. Daily practice compounds over time into confident, natural expression.",
   questions:[
-    {q:"What do employers consistently rank among the top qualities in candidates?",options:["Technical expertise","Verbal and written communication","Academic grades","Work experience"],correct:1},
-    {q:"What percentage of senior leaders said soft skills are more important than hard skills?",options:["47%","67%","57%","37%"],correct:2},
-    {q:"Which does communication NOT include, according to the passage?",options:["Active listening","Clear writing","Memorising vocabulary lists","Adapting messages to the audience"],correct:2}
+    {q:"What do employers consistently rank among their top candidate qualities?",options:["Technical expertise","Communication skills","Academic grades","Work experience"],correct:1},
+    {q:"What percentage of senior leaders valued soft skills over hard skills?",options:["47%","67%","57%","37%"],correct:2},
+    {q:"Which does communication NOT include, per the passage?",options:["Active listening","Clear writing","Memorising vocabulary","Adapting messages"],correct:2}
   ]
 };
+
 const accentSentences=[
-  {text:`"I <span class='focus-word'>think</span> <span class='focus-word'>the</span> wea<span class='focus-word'>th</span>er is better <span class='focus-word'>than</span> yesterday."`,plain:"I think the weather is better than yesterday."},
+  {text:`"I <span class='focus-word'>think</span> <span class='focus-word'>the</span> weather is better <span class='focus-word'>than</span> yesterday."`,plain:"I think the weather is better than yesterday."},
   {text:`"<span class='focus-word'>Th</span>ese <span class='focus-word'>th</span>ree things will make you a better speaker."`,plain:"These three things will make you a better speaker."},
   {text:`"<span class='focus-word'>Th</span>ank you for <span class='focus-word'>th</span>is opportunity to introduce myself."`,plain:"Thank you for this opportunity to introduce myself."}
 ];
-const soundDrills=[
-  {phoneme:"θ",word:"think"},{phoneme:"ð",word:"the"},{phoneme:"v",word:"very"},{phoneme:"w",word:"word"},
-  {phoneme:"ʃ",word:"should"},{phoneme:"tʃ",word:"chance"},{phoneme:"r",word:"right"},{phoneme:"l",word:"little"}
-];
-const stressExercises=[
-  {word:"pho-tog-ra-phy",syllables:["pho","tog","ra","phy"],stress:1},
-  {word:"com-mu-ni-ca-tion",syllables:["com","mu","ni","ca","tion"],stress:3},
-  {word:"op-por-tu-ni-ty",syllables:["op","por","tu","ni","ty"],stress:2}
-];
-const rhythmSentences=[
-  `<strong>She</strong> went to <strong>buy</strong> some <strong>books</strong> from the <strong>store</strong>.`,
-  `I <strong>need</strong> to <strong>finish</strong> this <strong>project</strong> by <strong>Friday</strong>.`,
-  `The <strong>team</strong> <strong>worked</strong> <strong>hard</strong> to <strong>meet</strong> the <strong>deadline</strong>.`
-];
+const soundDrills=[{phoneme:"θ",word:"think"},{phoneme:"ð",word:"the"},{phoneme:"v",word:"very"},{phoneme:"w",word:"word"},{phoneme:"ʃ",word:"should"},{phoneme:"tʃ",word:"chance"},{phoneme:"r",word:"right"},{phoneme:"l",word:"little"}];
+const stressExercises=[{word:"pho-tog-ra-phy",syllables:["pho","tog","ra","phy"],stress:1},{word:"com-mu-ni-ca-tion",syllables:["com","mu","ni","ca","tion"],stress:3},{word:"op-por-tu-ni-ty",syllables:["op","por","tu","ni","ty"],stress:2}];
+const rhythmSentences=[`<strong>She</strong> went to <strong>buy</strong> some <strong>books</strong> from the <strong>store</strong>.`,`I <strong>need</strong> to <strong>finish</strong> this <strong>project</strong> by <strong>Friday</strong>.`];
+
 const interviewQuestions={
-  hr:["Tell me about yourself in 2 minutes.","What is your greatest strength and a weakness you are improving?","Where do you see yourself in 5 years?","Why do you want to join our company?","Describe a time you worked in a team."],
-  star:["Tell me about a time you handled a difficult situation under pressure.","Describe a project where you took the lead.","Give an example of when you had to learn something new quickly.","Tell me about a time you disagreed with someone. How did you handle it?"],
+  hr:["Tell me about yourself in 2 minutes.","What is your greatest strength and a weakness you are improving?","Where do you see yourself in 5 years?","Why do you want to join our company?"],
+  star:["Tell me about a time you handled a difficult situation under pressure.","Describe a project where you took the lead.","Give an example of when you had to learn something new quickly."],
   gd:["Is social media doing more harm than good?","Should engineering students take communication courses?","Remote work vs office — which is better for productivity?"],
-  tech:["Explain your final year project to a non-technical person.","What is the most complex concept you understand well? Explain simply.","Walk me through how you debug a problem in your code."],
-  project:["Tell me what your project does in 30 seconds.","What was the biggest challenge in your project and how did you solve it?","What would you change about your project if you could start over?"]
+  tech:["Explain your final year project to a non-technical person.","Walk me through how you debug a problem in your code."],
+  project:["Tell me what your project does in 30 seconds.","What was the biggest challenge in your project and how did you solve it?"]
 };
-const interviewTips={
-  hr:["Use STAR method","Speak 2–3 min","Be specific"],
-  star:["Real examples","Say 'I' not 'we'","Mention outcome"],
-  gd:["Clear stance","Acknowledge others","Summarise"],
-  tech:["Simple language","Avoid jargon","Give examples"],
-  project:["Be enthusiastic","Know your stack","Quantify impact"]
-};
-const aiFeedbacks=[
-  {clarity:82,grammar:78,vocab:74,comment:"Your response has a clear main idea and good sentence variety. Try connecting ideas with 'furthermore', 'however', or 'as a result' to improve flow. Watch for run-on sentences — break them into shorter, punchier statements."},
-  {clarity:88,grammar:85,vocab:80,comment:"Excellent structure! Your opening sentence hooks the reader well. The middle paragraph could use more specific examples. Your conclusion is strong. Vocabulary shows good range — natural and confident."},
-  {clarity:75,grammar:90,vocab:70,comment:"Your grammar is solid — very few errors. The writing needs more depth. Expand your main point with a personal example. Adding 2–3 stronger vocabulary words would lift the quality significantly."}
-];
-const aiFbResponses=[
-  ()=>`Good attempt! Your answer covers the basics. Try to be more specific with concrete examples. Use "I" instead of "we" so the interviewer knows your individual contribution. Add a measurable result to strengthen your answer.`,
-  ()=>`Solid structure! I liked how you described the situation. To improve: your "Action" part could be more detailed — what specific steps did you take? End with what you learned from the experience.`,
-  ()=>`Nice! Your energy comes through. One tip: pause before answering — it signals confidence, not hesitation. Keep your answer within 2 minutes for HR rounds. You're improving!`
-];
+const interviewTips={hr:["Use STAR","2-3 min","Be specific"],star:["Real examples","Say 'I'","Mention outcome"],gd:["Clear stance","Acknowledge others","Summarise"],tech:["Simple language","No jargon","Give examples"],project:["Be enthusiastic","Know your stack","Quantify impact"]};
 
 // ===== STATE =====
 let state={};
 function resetState(){
   state={
     vocabIndex:0,vocabKnown:new Set(),
+    vocabWords:vocabData,
     grammarIndex:0,grammarScore:0,grammarDone:false,
     readingAnswers:{},readingScore:0,readingAnswered:0,
     accentSentenceIndex:0,stressIndex:0,
-    interviewTopic:'hr',interviewMessages:[],
+    interviewTopic:'hr',interviewMessages:[],currentInterviewQ:'',
     calMonth:new Date().getMonth(),calYear:new Date().getFullYear(),
     tasksCompleted:new Set(),earnedXP:0,
-    statWords:0,statWrites:0,statQs:0
+    statWords:0,statWrites:0,statQs:0,
+    writingScores:[],grammarScores:[],interviewScores:[]
   };
 }
 
@@ -800,9 +840,9 @@ function showNotif(icon,text,dur=2800){
   const n=document.getElementById('notif');
   document.getElementById('notif-icon').textContent=icon;
   document.getElementById('notif-text').textContent=text;
-  n.classList.add('show');
-  setTimeout(()=>n.classList.remove('show'),dur);
+  n.classList.add('show');setTimeout(()=>n.classList.remove('show'),dur);
 }
+
 function showPage(id){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
@@ -811,25 +851,35 @@ function showPage(id){
   if(nb)nb.classList.add('active');
   window.scrollTo(0,0);
   if(id==='calendar')renderCalendar();
+  if(id==='stats')renderStats();
 }
-function markTaskDone(taskId,xp){
+
+function markNavDone(taskId){
+  const nav=document.getElementById('nav-'+taskId);
+  if(nav){const b=nav.querySelector('.badge');if(b)b.remove();const d=document.createElement('span');d.className='done-badge';d.textContent='✓';nav.appendChild(d);}
+}
+
+async function markTaskDone(taskId,xp,score=100){
   if(state.tasksCompleted.has(taskId))return;
   state.tasksCompleted.add(taskId);state.earnedXP+=xp;
   const el=document.getElementById('task-'+taskId);
   if(el){el.classList.add('done');const a=el.querySelector('.task-arrow');if(a){a.textContent='✓';a.style.color='var(--green)';}}
-  const nav=document.getElementById('nav-'+taskId);
-  if(nav){const b=nav.querySelector('.badge');if(b)b.remove();const d=document.createElement('span');d.className='done-badge';d.textContent='✓';nav.appendChild(d);}
+  markNavDone(taskId);
   updateProgress();
-  if(state.tasksCompleted.size===6){setTimeout(()=>{showNotif('🔥','ALL DONE! Streak +1! See you tomorrow! 🎉',4000);updateStreak();},400);}
-  else showNotif('🎉',`+${xp} XP! Keep going!`);
+  if(state.tasksCompleted.size===6){
+    setTimeout(()=>{showNotif('🔥','ALL DONE! Streak +1! See you tomorrow! 🎉',4000);updateStreak();},400);
+  } else {
+    showNotif('🎉',`+${xp} XP! Keep going!`);
+  }
 }
+
 function updateProgress(){
   const done=state.tasksCompleted.size;
   document.getElementById('done-count').textContent=done;
   document.getElementById('pts-today').textContent=state.earnedXP;
   const circ=226.2;
   document.getElementById('progress-ring').style.strokeDashoffset=circ-circ*(done/6);
-  const msgs=["Start your first task!","Good start — keep going! 💪","Halfway there!","Looking great! 🔥","One more to go!","All done! 🎉"];
+  const msgs=["Start your first task!","Good start! 💪","Halfway there!","Looking great! 🔥","One more to go!","All done! 🎉"];
   document.getElementById('ring-msg').textContent=msgs[Math.min(done,5)];
   document.getElementById('xp-label').textContent=state.earnedXP+' XP';
   document.getElementById('xp-bar').style.width=Math.min((state.earnedXP/100)*100,100)+'%';
@@ -837,54 +887,62 @@ function updateProgress(){
   document.getElementById('stat-writes').textContent=state.statWrites;
   document.getElementById('stat-qs').textContent=state.statQs;
 }
+
 function updateStreak(){
-  if(!currentUser)return;
+  if(!userProfile)return;
   const today=new Date().toDateString();
-  if(!currentUser.completedDays)currentUser.completedDays=[];
-  if(!currentUser.completedDays.includes(today)){
-    currentUser.completedDays.push(today);
-    currentUser.streak=(currentUser.streak||0)+1;
-    currentUser.xp=(currentUser.xp||0)+state.earnedXP;
+  if(!userProfile.completedDays)userProfile.completedDays=[];
+  if(!userProfile.completedDays.includes(today)){
+    userProfile.completedDays.push(today);
+    userProfile.streak=(userProfile.streak||0)+1;
   }
-  document.getElementById('streak-count').textContent=currentUser.streak;
-  document.getElementById('dash-streak').textContent=currentUser.streak;
-  document.getElementById('cal-streak').textContent=currentUser.streak;
-  const users=getUsers();users[currentUser.username]=currentUser;saveUsers(users);saveSession(currentUser);
+  document.getElementById('streak-count').textContent=userProfile.streak;
+  document.getElementById('dash-streak').textContent=userProfile.streak;
+  if(userProfile.username){const users=getUsers();users[userProfile.username]={...userProfile};saveUsers(users);saveSession(userProfile);}
 }
 
 // ===== VOCAB =====
+async function loadVocabFromAPI(){
+  try{
+    const r=await fetch('/api/vocab/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({level:'intermediate',theme:'workplace communication'})});
+    const data=await r.json();
+    if(data.words&&data.words.length>0)state.vocabWords=data.words;
+  }catch(e){console.log('Using fallback vocab');}
+  renderVocab();
+}
+
 function renderVocab(){
-  const w=vocabData[state.vocabIndex];
-  document.getElementById('vw').textContent=w.word;
-  document.getElementById('vp').textContent=w.phonetic;
-  document.getElementById('vt').textContent=w.type;
-  document.getElementById('vm').textContent=w.meaning;
-  document.getElementById('ve').textContent='"'+w.example+'"';
+  const w=state.vocabWords[state.vocabIndex]||vocabData[state.vocabIndex];
+  document.getElementById('vw').textContent=w.word||'—';
+  document.getElementById('vp').textContent=w.phonetic||'—';
+  document.getElementById('vt').textContent=w.type||'—';
+  document.getElementById('vm').textContent=w.meaning||'—';
+  const tamil=document.getElementById('vtamil');if(tamil)tamil.textContent=w.tamil_meaning?`🇮🇳 ${w.tamil_meaning}`:'';
+  document.getElementById('ve').textContent='"'+(w.example||'')+'"';
   document.getElementById('vocab-counter').textContent=`Word ${state.vocabIndex+1} of 5`;
   let dots='';
-  for(let i=0;i<5;i++){
-    const c=state.vocabKnown.has(i)?'var(--green)':(i===state.vocabIndex?'var(--accent)':'var(--border2)');
-    dots+=`<div style="width:10px;height:10px;border-radius:50%;background:${c};transition:background .3s;"></div>`;
-  }
+  for(let i=0;i<5;i++){const c=state.vocabKnown.has(i)?'var(--green)':(i===state.vocabIndex?'var(--accent)':'var(--border2)');dots+=`<div style="width:10px;height:10px;border-radius:50%;background:${c};transition:background .3s;"></div>`;}
   document.getElementById('vocab-dots').innerHTML=dots;
-  const ri=(state.vocabIndex+2)%5;
-  document.getElementById('recall-q').textContent=vocabData[ri].meaning;
+  const ri=(state.vocabIndex+2)%5;const rw=state.vocabWords[ri]||vocabData[ri];
+  document.getElementById('recall-q').textContent=rw.meaning||'—';
   document.getElementById('recall-input').value='';
-  document.getElementById('recall-result').style.display='none';
+  const rr=document.getElementById('recall-result');if(rr)rr.style.display='none';
 }
+
 function vocabNav(d){state.vocabIndex=(state.vocabIndex+d+5)%5;renderVocab();}
-function markVocabKnown(){
+
+async function markVocabKnown(){
   state.vocabKnown.add(state.vocabIndex);renderVocab();
-  if(state.vocabKnown.size===5){state.statWords+=5;markTaskDone('vocab',15);}
+  if(state.vocabKnown.size===5){state.statWords+=5;await markTaskDone('vocab',15);}
   else vocabNav(1);
 }
+
 function checkRecall(){
   const v=document.getElementById('recall-input').value.trim().toLowerCase();
-  const ri=(state.vocabIndex+2)%5;
-  const c=vocabData[ri].word.toLowerCase();
+  const ri=(state.vocabIndex+2)%5;const rw=state.vocabWords[ri]||vocabData[ri];
   const r=document.getElementById('recall-result');r.style.display='block';
-  if(v===c){r.style.color='var(--green)';r.textContent='✓ Correct! Great recall.';}
-  else{r.style.color='var(--coral)';r.textContent=`✗ The answer was: ${vocabData[ri].word}`;}
+  if(v===(rw.word||'—').toLowerCase()){r.style.color='var(--green)';r.textContent='✓ Correct! Great recall!';}
+  else{r.style.color='var(--coral)';r.textContent=`✗ Answer: ${rw.word}`;}
 }
 
 // ===== WRITING =====
@@ -892,28 +950,41 @@ let promptIdx=0;
 function renderWriting(){
   document.getElementById('writing-prompt').textContent=writingPrompts[promptIdx];
   document.getElementById('writing-area').value='';document.getElementById('wc').textContent='0';
-  document.getElementById('writing-feedback').style.display='none';
+  const wf=document.getElementById('writing-feedback');if(wf)wf.style.display='none';
 }
 function newWritingPrompt(){promptIdx=(promptIdx+1)%writingPrompts.length;renderWriting();}
-function updateWordCount(){
-  const w=document.getElementById('writing-area').value.trim().split(/\s+/).filter(w=>w.length>0);
-  document.getElementById('wc').textContent=w.length;
-}
-function submitWriting(){
-  const t=document.getElementById('writing-area').value.trim();
-  if(t.length<20){showNotif('⚠️','Write at least a few sentences first!');return;}
-  const fb=aiFeedbacks[Math.floor(Math.random()*aiFeedbacks.length)];
-  document.getElementById('writing-feedback').style.display='block';
-  document.getElementById('feedback-content').innerHTML=fb.comment;
-  setTimeout(()=>{
-    document.getElementById('s-clarity').style.width=fb.clarity+'%';
-    document.getElementById('s-grammar').style.width=fb.grammar+'%';
-    document.getElementById('s-vocab').style.width=fb.vocab+'%';
-    document.getElementById('sp-clarity').textContent=fb.clarity+'%';
-    document.getElementById('sp-grammar').textContent=fb.grammar+'%';
-    document.getElementById('sp-vocab').textContent=fb.vocab+'%';
-  },100);
-  state.statWrites++;markTaskDone('writing',20);
+function updateWordCount(){const w=document.getElementById('writing-area').value.trim().split(/\s+/).filter(w=>w.length>0);document.getElementById('wc').textContent=w.length;}
+
+async function submitWriting(){
+  const text=document.getElementById('writing-area').value.trim();
+  const prompt=document.getElementById('writing-prompt').textContent;
+  if(text.length<20){showNotif('⚠️','Write at least a few sentences first!');return;}
+  const btn=document.getElementById('submit-writing-btn');
+  if(btn){btn.disabled=true;btn.textContent='AI reviewing...';}
+  try{
+    const r=await fetch('/api/writing/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,prompt})});
+    const fb=await r.json();
+    const wf=document.getElementById('writing-feedback');if(wf)wf.style.display='block';
+    const fc=document.getElementById('feedback-content');if(fc)fc.textContent=fb.feedback||'Good effort! Keep writing daily.';
+    const ft=document.getElementById('feedback-tip');if(ft)ft.textContent='💡 '+( fb.improvement||'Keep practising!');
+    setTimeout(()=>{
+      const sc=fb.clarity||75,sg=fb.grammar||75,sv=fb.vocabulary||75;
+      const ec=document.getElementById('s-clarity');if(ec)ec.style.width=sc+'%';
+      const eg=document.getElementById('s-grammar');if(eg)eg.style.width=sg+'%';
+      const ev=document.getElementById('s-vocab');if(ev)ev.style.width=sv+'%';
+      const ecp=document.getElementById('sp-clarity');if(ecp)ecp.textContent=sc+'%';
+      const egp=document.getElementById('sp-grammar');if(egp)egp.textContent=sg+'%';
+      const evp=document.getElementById('sp-vocab');if(evp)evp.textContent=sv+'%';
+    },100);
+    state.statWrites++;state.writingScores.push(fb.overall||75);
+    await markTaskDone('writing',20,fb.overall||75);
+  }catch(e){
+    // Fallback feedback
+    const wf=document.getElementById('writing-feedback');if(wf)wf.style.display='block';
+    const fc=document.getElementById('feedback-content');if(fc)fc.textContent='Good effort! Your writing shows clear ideas. Try to use more connecting words like however, furthermore, and as a result to improve your flow.';
+    await markTaskDone('writing',20);
+  }
+  if(btn){btn.disabled=false;btn.textContent='Submit for AI Review ↗';}
 }
 
 // ===== GRAMMAR =====
@@ -924,9 +995,9 @@ function renderGrammar(){
   document.getElementById('gram-sentence').innerHTML=g.sentence.replace(g.blank,`<span class='grammar-blank' id='gblank'>___</span>`);
   const opts=document.getElementById('gram-options');opts.innerHTML='';
   g.options.forEach((o,i)=>{const b=document.createElement('div');b.className='grammar-option';b.textContent=o;b.onclick=()=>selectGram(i,b);opts.appendChild(b);});
-  document.getElementById('gram-tip').style.display='none';
-  document.getElementById('gram-next').style.display='none';
+  document.getElementById('gram-tip').style.display='none';document.getElementById('gram-next').style.display='none';
 }
+
 function selectGram(idx,btn){
   const g=grammarData[state.grammarIndex];
   document.querySelectorAll('.grammar-option').forEach(o=>o.onclick=null);
@@ -936,15 +1007,17 @@ function selectGram(idx,btn){
   const t=document.getElementById('gram-tip');t.textContent='💡 '+g.tip;t.style.display='block';
   document.getElementById('gram-next').style.display='inline-flex';
 }
-function nextGrammar(){
+
+async function nextGrammar(){
   state.grammarIndex++;
   if(state.grammarIndex>=grammarData.length){
     state.grammarDone=true;
     document.getElementById('gram-done').style.display='block';
     document.getElementById('gram-final').textContent=state.grammarScore;
     document.getElementById('gram-next').style.display='none';
-    markTaskDone('grammar',10);
-  } else renderGrammar();
+    state.grammarScores.push(state.grammarScore*20);
+    await markTaskDone('grammar',10,state.grammarScore*20);
+  }else renderGrammar();
 }
 
 // ===== READING =====
@@ -955,22 +1028,24 @@ function renderReading(){
     const div=document.createElement('div');div.className='reading-q';
     div.innerHTML=`<div class="reading-q-text">${qi+1}. ${q.q}</div>`;
     const opts=document.createElement('div');opts.className='reading-options';
-    q.options.forEach((o,oi)=>{
-      const opt=document.createElement('div');opt.className='reading-opt';opt.textContent=o;
-      opt.onclick=()=>selectRead(qi,oi,q.correct,opt,opts);opts.appendChild(opt);
-    });
+    q.options.forEach((o,oi)=>{const opt=document.createElement('div');opt.className='reading-opt';opt.textContent=o;opt.onclick=()=>selectRead(qi,oi,q.correct,opt,opts);opts.appendChild(opt);});
     div.appendChild(opts);qc.appendChild(div);
     if(qi<readingData.questions.length-1){const d=document.createElement('div');d.className='divider';qc.appendChild(d);}
   });
 }
-function selectRead(qi,oi,correct,opt,opts){
+
+async function selectRead(qi,oi,correct,opt,opts){
   if(state.readingAnswers[qi]!==undefined)return;
   state.readingAnswers[qi]=oi;
   [...opts.children].forEach(o=>o.onclick=null);
   if(oi===correct){opt.classList.add('selected-correct');state.readingScore++;}
   else{opt.classList.add('selected-wrong');opts.children[correct].classList.add('selected-correct');}
   state.readingAnswered++;
-  if(state.readingAnswered===3){document.getElementById('reading-done').style.display='block';document.getElementById('reading-score').textContent=state.readingScore;markTaskDone('reading',15);}
+  if(state.readingAnswered===3){
+    document.getElementById('reading-done').style.display='block';
+    document.getElementById('reading-score').textContent=state.readingScore;
+    await markTaskDone('reading',15,state.readingScore*33);
+  }
 }
 
 // ===== ACCENT =====
@@ -980,70 +1055,84 @@ function renderAccent(){
   soundDrills.forEach(s=>{
     const d=document.createElement('div');d.className='sound-chip';
     d.innerHTML=`<div class='phoneme'>${s.phoneme}</div><div class='word'>${s.word}</div>`;
-    d.onclick=()=>{
-      d.classList.toggle('done');
-      if('speechSynthesis'in window){const u=new SpeechSynthesisUtterance(s.word);u.rate=0.65;window.speechSynthesis.speak(u);}
-      showNotif('🔊',`Practice "${s.word}" — say it 3 times!`,1800);
-    };
+    d.onclick=()=>{d.classList.toggle('done');if('speechSynthesis'in window){const u=new SpeechSynthesisUtterance(s.word);u.rate=0.65;speechSynthesis.speak(u);}showNotif('🔊',`Say "${s.word}" 3 times!`,1800);};
     grid.appendChild(d);
   });
   renderStress();
   document.getElementById('rhythm-sentence').innerHTML=rhythmSentences[0];
 }
+
 function renderStress(){
   const ex=stressExercises[state.stressIndex%stressExercises.length];
-  const area=document.getElementById('stress-exercise');
-  area.innerHTML=`<div style="font-size:15px;font-family:var(--serif);margin-bottom:10px;color:var(--text);">${ex.word}</div><div style="display:flex;gap:8px;flex-wrap:wrap;">`+
+  document.getElementById('stress-exercise').innerHTML=
+    `<div style="font-size:15px;font-family:var(--serif);margin-bottom:10px;">${ex.word}</div><div style="display:flex;gap:8px;flex-wrap:wrap;">`+
     ex.syllables.map((s,i)=>`<div class="grammar-option" onclick="checkStress(${i},${ex.stress},this)">${s}</div>`).join('')+
     `</div><div id="stress-fb" style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:600;"></div>`;
 }
+
 function checkStress(idx,correct,btn){
-  const opts=document.querySelectorAll('#stress-exercise .grammar-option');
-  opts.forEach(o=>o.onclick=null);
+  document.querySelectorAll('#stress-exercise .grammar-option').forEach(o=>o.onclick=null);
   if(idx===correct){btn.classList.add('correct');document.getElementById('stress-fb').textContent='✓ Correct!';}
-  else{btn.classList.add('wrong');opts[correct].classList.add('correct');document.getElementById('stress-fb').textContent='Not quite — correct one is highlighted.';}
+  else{btn.classList.add('wrong');document.querySelectorAll('#stress-exercise .grammar-option')[correct].classList.add('correct');document.getElementById('stress-fb').textContent='Not quite — check the green one.';}
   setTimeout(()=>{state.stressIndex++;renderStress();},1800);
 }
+
 let isRecording=false;
 function playExample(){
   const wv=document.getElementById('waveform');wv.classList.add('playing');
-  if('speechSynthesis'in window){const u=new SpeechSynthesisUtterance(accentSentences[state.accentSentenceIndex].plain);u.rate=0.82;u.onend=()=>wv.classList.remove('playing');window.speechSynthesis.speak(u);}
+  if('speechSynthesis'in window){const u=new SpeechSynthesisUtterance(accentSentences[state.accentSentenceIndex].plain);u.rate=0.82;u.onend=()=>wv.classList.remove('playing');speechSynthesis.speak(u);}
   else setTimeout(()=>wv.classList.remove('playing'),2500);
 }
 function toggleRecord(btn){
   isRecording=!isRecording;const wv=document.getElementById('waveform');
-  if(isRecording){btn.textContent='⏹ Stop';btn.style.background='var(--coral-light)';btn.style.color='var(--coral)';wv.classList.add('playing');wv.querySelectorAll('span').forEach(s=>s.style.background='var(--coral)');}
-  else{btn.textContent='🎙 Record myself';btn.style.background='';btn.style.color='';wv.classList.remove('playing');wv.querySelectorAll('span').forEach(s=>s.style.background='var(--accent)');showNotif('✅','Good job! Match the rhythm and stress.',2500);}
+  if(isRecording){btn.textContent='⏹ Stop';wv.classList.add('playing');wv.querySelectorAll('span').forEach(s=>s.style.background='var(--coral)');}
+  else{btn.textContent='🎙 Record';wv.classList.remove('playing');wv.querySelectorAll('span').forEach(s=>s.style.background='var(--accent)');showNotif('✅','Good! Match the rhythm and stress.',2500);}
 }
 function nextAccentSentence(){state.accentSentenceIndex=(state.accentSentenceIndex+1)%accentSentences.length;document.getElementById('accent-sentence').innerHTML=accentSentences[state.accentSentenceIndex].text;}
-function playRhythm(){if('speechSynthesis'in window){const u=new SpeechSynthesisUtterance(document.getElementById('rhythm-sentence').textContent);u.rate=0.78;window.speechSynthesis.speak(u);}}
-function markAccentDone(){markTaskDone('accent',20);showNotif('🎙️','Accent training complete! +20 XP');}
+function playRhythm(){if('speechSynthesis'in window){const u=new SpeechSynthesisUtterance(document.getElementById('rhythm-sentence').textContent);u.rate=0.78;speechSynthesis.speak(u);}}
+async function markAccentDone(){await markTaskDone('accent',20);showNotif('🎙️','Accent training complete! +20 XP');}
 
 // ===== INTERVIEW =====
 function renderInterview(){
   state.interviewMessages=[];
-  const q=interviewQuestions[state.interviewTopic][Math.floor(Math.random()*interviewQuestions[state.interviewTopic].length)];
-  document.getElementById('interview-q').textContent=q;
+  const qs=interviewQuestions[state.interviewTopic];
+  state.currentInterviewQ=qs[Math.floor(Math.random()*qs.length)];
+  document.getElementById('interview-q').textContent=state.currentInterviewQ;
   document.getElementById('interview-tips').innerHTML=interviewTips[state.interviewTopic].map(t=>`<span class="tag tag-purple">${t}</span>`).join('');
   const chat=document.getElementById('interview-chat');chat.innerHTML='';
-  addAIMsg(`Hello! I'm your mock interviewer today. Let's begin: "${q}" — take a breath, structure your answer, and go!`);
+  addAIMsg(`Hello! I'm your AI mock interviewer. Let's begin: "${state.currentInterviewQ}" — take a breath, structure your answer, and go!`);
 }
 function selectTopic(el,t){document.querySelectorAll('.topic-chip').forEach(c=>c.classList.remove('active'));el.classList.add('active');state.interviewTopic=t;renderInterview();}
 function newInterviewQ(){renderInterview();}
 function addAIMsg(text){const chat=document.getElementById('interview-chat');const d=document.createElement('div');d.className='chat-bubble ai';d.innerHTML=`<div class='who'>AI Interviewer</div>${text}`;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
 function addUserMsg(text){const chat=document.getElementById('interview-chat');const d=document.createElement('div');d.className='chat-bubble user';d.textContent=text;chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
-function sendInterviewAnswer(){
+function addThinking(){const chat=document.getElementById('interview-chat');const d=document.createElement('div');d.className='ai-thinking';d.id='thinking';d.innerHTML='<span></span><span></span><span></span>';chat.appendChild(d);chat.scrollTop=chat.scrollHeight;}
+function removeThinking(){const t=document.getElementById('thinking');if(t)t.remove();}
+
+async function sendInterviewAnswer(){
   const inp=document.getElementById('interview-input');const text=inp.value.trim();
-  if(!text)return;addUserMsg(text);inp.value='';state.interviewMessages.push(text);state.statQs++;
-  setTimeout(()=>{
-    addAIMsg(aiFbResponses[Math.floor(Math.random()*aiFbResponses.length)]());
-    if(state.interviewMessages.length===1)setTimeout(()=>addAIMsg("Great effort! Want to try another question? Type your next answer to continue."),1000);
-    markTaskDone('interview',20);updateProgress();
-  },900);
+  if(!text)return;
+  addUserMsg(text);inp.value='';state.interviewMessages.push(text);state.statQs++;
+  addThinking();
+  try{
+    const r=await fetch('/api/interview/feedback',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:state.currentInterviewQ,answer:text,topic:state.interviewTopic})});
+    const data=await r.json();
+    removeThinking();
+    if(data.feedback){
+      addAIMsg(data.feedback);
+      if(data.followup_question)setTimeout(()=>addAIMsg(`Follow-up: ${data.followup_question}`),1000);
+      state.interviewScores.push(data.score||70);
+    } else throw new Error('no feedback');
+  }catch(e){
+    removeThinking();
+    addAIMsg('Good attempt! Structure your answer using STAR — Situation, Task, Action, Result. Be specific and use "I" instead of "we". Try again!');
+    state.interviewScores.push(70);
+  }
+  await markTaskDone('interview',20);
 }
 
 // ===== CALENDAR =====
-function renderCalendar(){
+async function renderCalendar(){
   const months=['January','February','March','April','May','June','July','August','September','October','November','December'];
   const days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const today=new Date();
@@ -1053,12 +1142,12 @@ function renderCalendar(){
   const first=new Date(state.calYear,state.calMonth,1);
   const dim=new Date(state.calYear,state.calMonth+1,0).getDate();
   for(let i=0;i<first.getDay();i++)grid.innerHTML+=`<div class='cal-day empty'></div>`;
-  const completed=(currentUser&&currentUser.completedDays)||[];
+  const completedDays=(userProfile&&userProfile.completedDays)||[];
   for(let d=1;d<=dim;d++){
     const dt=new Date(state.calYear,state.calMonth,d);
     const isToday=dt.toDateString()===today.toDateString();
     const isPast=dt<today&&!isToday;
-    const isDone=completed.includes(dt.toDateString());
+    const isDone=completedDays.includes(dt.toDateString());
     let cls='cal-day';
     if(isToday)cls+=' today';
     else if(isDone)cls+=' done';
@@ -1066,13 +1155,13 @@ function renderCalendar(){
     else cls+=' future';
     grid.innerHTML+=`<div class='${cls}'>${d}</div>`;
   }
-  const streak=currentUser?currentUser.streak||0:0;
-  const total=currentUser?completed.length:0;
+  const streak=userProfile?.streak||0;
+  const total=completedDays.length;
   document.getElementById('cal-streak').textContent=streak;
   document.getElementById('cal-total').textContent=total;
-  const joinDate=currentUser?new Date(currentUser.joinDate):today;
-  const daysSinceJoin=Math.max(1,Math.ceil((today-joinDate)/(1000*60*60*24)));
-  document.getElementById('cal-rate').textContent=total>0?Math.round((total/daysSinceJoin)*100)+'%':'—';
+  const joinDate=userProfile?.joinDate?new Date(userProfile.joinDate):today;
+  const daysSince=Math.max(1,Math.ceil((today-joinDate)/(1000*60*60*24)));
+  document.getElementById('cal-rate').textContent=total>0?Math.round((total/daysSince)*100)+'%':'—';
 }
 function changeMonth(dir){
   state.calMonth+=dir;
@@ -1083,85 +1172,56 @@ function changeMonth(dir){
   renderCalendar();
 }
 
+// ===== STATS =====
+function renderStats(){
+  document.getElementById('stat-words').textContent=state.statWords;
+  document.getElementById('stat-writes').textContent=state.statWrites;
+  document.getElementById('stat-qs').textContent=state.statQs;
+}
+
 // ===== INIT =====
 function init(){
   resetState();
   const now=new Date();
-  document.getElementById('today-date').textContent=now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-  renderVocab();renderWriting();renderGrammar();renderReading();renderAccent();renderInterview();
-  updateProgress();showPage('dashboard');
+  const dateEl=document.getElementById('today-date');
+  if(dateEl)dateEl.textContent=now.toLocaleDateString('en-IN',{weekday:'long',year:'numeric',month:'long',day:'numeric'});
+  renderVocab();
+  renderWriting();
+  renderGrammar();
+  renderReading();
+  renderAccent();
+  renderInterview();
+  updateProgress();
+  showPage('dashboard');
+  // Try to load AI vocab in background
+  loadVocabFromAPI();
 }
 
 // ===== AUTO LOGIN =====
-window.onload=()=>{
-  const s=getSession();
-  if(s&&s.username){currentUser=s;loginSuccess(s);}
-};
-</script>
-
-<!-- RAZORPAY -->
-
-
-<!-- PAYWALL MODAL -->
-<div id="paywall-modal" style="display:none;position:fixed;inset:0;background:rgba(26,29,46,.6);backdrop-filter:blur(6px);z-index:9000;align-items:center;justify-content:center;padding:20px;">
-  <div style="background:#fff;border-radius:24px;padding:40px;max-width:440px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.15);text-align:center;">
-    <div style="font-size:44px;margin-bottom:12px;">🔒</div>
-    <div style="font-size:20px;font-weight:800;color:#1A1D2E;margin-bottom:6px;"><span id="paywall-module">Writing</span> is a Pro feature</div>
-    <div style="font-size:14px;color:#6B7080;margin-bottom:24px;line-height:1.6;">Upgrade to unlock all 6 modules, real Claude AI feedback, streak tracking, and interview prep.</div>
-
-    <!-- FREE TRIAL -->
-    <button id="trial-btn" onclick="startFreeTrial()" style="width:100%;padding:14px;background:linear-gradient(135deg,#18A76A,#0EA5E9);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit;">
-      🎁 Start 7-Day Free Trial
-    </button>
-    <div id="trial-used-msg" style="display:none;background:rgba(217,119,6,.1);color:#D97706;border-radius:10px;padding:10px;font-size:13px;font-weight:600;margin-bottom:12px;">Trial already used — upgrade to continue ↓</div>
-
-    <!-- COMING SOON -->
-    <div style="background:#F5F6FA;border:1.5px dashed #CBD5E1;border-radius:12px;padding:14px;text-align:center;margin-bottom:16px;">
-      <div style="font-size:13px;color:#6B7080;font-weight:600;">💳 Paid plans coming soon!</div>
-      <div style="font-size:12px;color:#94A3B8;margin-top:4px;">For now enjoy the free trial — full access for 7 days!</div>
-    </div>
-
-    <!-- FEATURES LIST -->
-    <div style="background:#F5F6FA;border-radius:12px;padding:14px;text-align:left;margin-bottom:16px;">
-      <div style="font-size:12px;font-weight:700;color:#6B7080;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">What you get with Pro</div>
-      <div style="font-size:13px;color:#1A1D2E;line-height:2;">✅ All 6 daily modules<br>✅ Real Claude AI feedback on writing<br>✅ AI mock interviewer<br>✅ Accent training + audio<br>✅ Streak calendar 2025–2029<br>✅ Tamil word meanings<br>✅ Cancel anytime</div>
-    </div>
-
-    <button onclick="hidePaywall()" style="background:none;border:none;color:#6B7080;font-size:13px;cursor:pointer;font-family:inherit;">Maybe later</button>
-  </div>
-</div>
-
-<!-- PLAN EXPIRY WARNING BANNER -->
-<div id="expiry-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#D97706;color:#fff;padding:12px 20px;font-size:13px;font-weight:600;text-align:center;z-index:8000;">
-  ⚠️ <span id="expiry-text">Your trial ends soon!</span>
-  <button onclick="showPaywall('pro')" style="background:rgba(255,255,255,.25);border:none;color:#fff;padding:4px 12px;border-radius:20px;font-size:12px;font-weight:700;cursor:pointer;margin-left:10px;font-family:inherit;">Upgrade Now</button>
-  <button onclick="document.getElementById('expiry-banner').style.display='none'" style="background:none;border:none;color:rgba(255,255,255,.7);font-size:16px;cursor:pointer;margin-left:10px;">✕</button>
-</div>
-
-<script src="/paywall.js"></script>
-<script>
-// Show expiry warning if trial/sub ends in < 3 days
-function checkExpiry() {
-  if (!userProfile) return;
-  const plan = userProfile.plan;
-  const endDate = plan === 'pro' ? userProfile.subscription_end_date : plan === 'trial' ? userProfile.trial_end_date : null;
-  if (!endDate) return;
-  const daysLeft = Math.ceil((new Date(endDate) - new Date()) / (1000*60*60*24));
-  if (daysLeft <= 3 && daysLeft >= 0) {
-    document.getElementById('expiry-banner').style.display = 'block';
-    document.getElementById('expiry-text').textContent = plan === 'trial'
-      ? `Your free trial ends in ${daysLeft} day${daysLeft!==1?'s':''}! Upgrade to keep access.`
-      : `Your Pro subscription ends in ${daysLeft} day${daysLeft!==1?'s':''}! Renew now.`;
+window.onload=async()=>{
+  if(HAS_SUPABASE && sb){
+    sb.auth.onAuthStateChange(async(event,session)=>{
+      if(event==='SIGNED_IN'&&session){
+        currentUser=session.user;
+        userProfile={streak:0,xp:0,plan:'free',completedDays:[]};
+        loginSuccess();
+      }
+    });
+    const {data:{session}}=await sb.auth.getSession();
+    if(session){currentUser=session.user;userProfile={streak:0,xp:0,plan:'free',completedDays:[]};loginSuccess();}
+    else{document.getElementById('auth-screen').style.display='flex';}
+  } else {
+    // No Supabase — use local storage
+    const s=getSession();
+    if(s&&(s.username||s.email)){
+      currentUser={id:s.username||s.email,email:s.email||s.username,user_metadata:{full_name:s.name}};
+      userProfile=s;
+      loginSuccess();
+    } else {
+      document.getElementById('auth-screen').style.display='flex';
+    }
   }
-}
-// Call after user loads
-const _origSetupUI = window.setupUserUI;
-window.setupUserUI = function() {
-  if (_origSetupUI) _origSetupUI();
-  updatePlanBadge();
-  setTimeout(checkExpiry, 2000);
 };
 </script>
-
 </body>
 </html>
